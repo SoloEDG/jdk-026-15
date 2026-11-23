@@ -14,10 +14,27 @@ export interface Move {
   before: Mark;
   after: Mark;
 }
+export type NoteKind = "candidate" | "excluded";
+export interface ClueRef {
+  line: number;
+  clueIndex: number;
+}
+export interface NoteDraft extends ClueRef {
+  start: number;
+  end: number;
+  kind: NoteKind;
+  reason: string;
+}
+export interface SegmentNote extends NoteDraft {
+  id: string;
+  version: number;
+}
 export interface Session {
   puzzleId: string;
   marks: Mark[];
   moves: Move[];
+  notes: SegmentNote[];
+  marksVersion: number;
   hints: number;
   checks: number;
   seconds: number;
@@ -45,4 +62,6 @@ export type GameAction =
   | { type: "hint"; index: number; mark: Mark }
   | { type: "check" }
   | { type: "tick" }
+  | { type: "note"; note: NoteDraft }
+  | { type: "dropNote"; id: string }
   | { type: "reset" };

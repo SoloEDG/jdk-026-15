@@ -1,0 +1,158 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {webcrypto} from 'node:crypto';
+import {puzzles} from '../src/features/catalog/model/puzzles';
+import {newDocument} from '../src/shared/document';
+import {transition} from '../src/app/reducer';
+import {nextHint} from '../src/features/assist/model/hints';
+import {analyzeLine,analyzeBoard,type AnalysisCache} from '../src/features/board/lib/lineAnalysis';
+import {noteStatus} from '../src/features/board/model/notes';
+import {loadDocument,saveDocument} from '../src/features/journal/lib/storage';
+import type {Mark} from '../src/shared/types';
+Object.defineProperty(globalThis,'crypto',{value:webcrypto,configurable:true});
+let stored:string|null=null;
+Object.defineProperty(globalThis,'localStorage',{value:{getItem:()=>stored,setItem:(_:string,value:string)=>{stored=value;}},configurable:true});
+const U=(...m:Mark[])=>m;
+test('legal placements respect filled and crossed marks',()=>{
+ const a=analyzeLine(5,[2],U('unknown','unknown','unknown','unknown','unknown'));
+ assert.equal(a.placements.length,4);
+ assert.deepEqual(a.segments[0].map(s=>s.start),[0,1,2,3]);
+ assert.equal(a.certainStarts[0],null);
+ const b=analyzeLine(5,[2],U('unknown','filled','filled','unknown','unknown'));
+ assert.deepEqual(b.placements,[[1]]);
+ assert.equal(b.certainStarts[0],1);
+ assert.deepEqual(b.certain[0],[false,true,true,false,false]);
+ const c=analyzeLine(5,[2],U('unknown','filled','cross','unknown','unknown'));
+ assert.deepEqual(c.placements,[[0]]);
+});
+test('identical numbers stay ambiguous until every legal reading agrees',()=>{
+ const a=analyzeLine(8,[2,2],U('unknown','unknown','unknown','filled','filled','unknown','unknown','unknown'));
+ assert.deepEqual(a.placements,[[0,3],[3,6]]);
+ assert.equal(a.certainStarts[0],null,'first same-length black run is not proof for number 1');
+ assert.equal(a.certainStarts[1],null,'first same-length black run is not proof for number 2');
+ const b=analyzeLine(8,[2,2],U('cross','unknown','unknown','filled','filled','unknown','unknown','unknown'));
+ assert.deepEqual(b.placements,[[3,6]]);
+ assert.deepEqual(b.certainStarts,[3,6],'only when all legal readings agree is a number certain');
+});
+test('a line with no legal placement reports conflict instead of certainty',()=>{
+ const a=analyzeLine(5,[3],U('filled','cross','unknown','unknown','unknown'));
+ assert.equal(a.conflict,true);
+ assert.equal(a.placements.length,0);
+ assert.equal(a.certainStarts[0],null);
+ assert.equal(a.satisfied,false);
+});
+test('zero clue lines are legal only when nothing is filled',()=>{
+ const empty=analyzeLine(4,[0],U('unknown','cross','unknown','unknown'));
+ assert.equal(empty.conflict,false);
+ assert.equal(empty.satisfied,true);
+ const broken=analyzeLine(4,[0],U('unknown','filled','unknown','unknown'));
+ assert.equal(broken.conflict,true);
+});
+test('cells know which numbers can still reach them',()=>{
+ const a=analyzeLine(5,[1,1],U('unknown','unknown','unknown','unknown','unknown'));
+ assert.deepEqual(a.cellClues[0],[0]);
+ assert.deepEqual(a.cellClues[4],[1]);
+ assert.deepEqual(a.cellClues[2],[0,1]);
+});
+test('a satisfied line has exactly one legal reading, so every number is certain',()=>{
+ const a=analyzeLine(5,[1,1],U('filled','cross','filled','cross','cross'));
+ assert.equal(a.satisfied,true);
+ assert.deepEqual(a.placements,[[0,2]]);
+ assert.deepEqual(a.certainStarts,[0,2]);
+});
+test('board analysis recomputes only the affected row and column',()=>{
+ const p=puzzles.find(p=>p.id==='heart')!;
+ const cache:AnalysisCache=new Map();
+ const marks=Array(p.size**2).fill('unknown') as Mark[];
+ const first=analyzeBoard(p,marks,cache);
+ const next=[...marks];next[0]='filled';
+ const second=analyzeBoard(p,next,cache);
+ for(let line=0;line<p.size*2;line++){
+  if(line===0||line===p.size)assert.notEqual(second[line],first[line]);
+  else assert.equal(second[line],first[line]);
+ }
+});
+test('notes record hypotheses without touching marks and revalidate after edits',()=>{
+ const p=puzzles.find(p=>p.id==='heart')!;
+ let d=newDocument(p);
+ d=transition(d,{type:'note',note:{line:0,clueIndex:0,start:2,end:3,kind:'candidate',reason:'试试看'}},puzzles);
+ let s=d.sessions[p.id];
+ assert.equal(s.notes.length,1);
+ assert.equal(s.notes[0].version,0);
+ assert.ok(s.marks.every(m=>m==='unknown'),'a hypothesis must never become a real mark');
+ let a=analyzeBoard(p,s.marks);
+ assert.equal(noteStatus(s.notes[0],a[0]),'active');
+ d=transition(d,{type:'mark',index:1,mark:'filled'},puzzles);
+ s=d.sessions[p.id];
+ assert.equal(s.marksVersion,1);
+ assert.equal(s.notes.length,1,'player notes survive mark changes');
+ a=analyzeBoard(p,s.marks);
+ assert.equal(noteStatus(s.notes[0],a[0]),'invalid','conclusion contradicted by new marks is stale');
+ d=transition(d,{type:'undo'},puzzles);
+ s=d.sessions[p.id];
+ a=analyzeBoard(p,s.marks);
+ assert.equal(noteStatus(s.notes[0],a[0]),'active','undo restores the earlier reading');
+ d=transition(d,{type:'dropNote',id:s.notes[0].id},puzzles);
+ assert.equal(d.sessions[p.id].notes.length,0);
+});
+test('exclusion notes are confirmed by new marks and refuted by certainty',()=>{
+ const p=puzzles.find(p=>p.id==='heart')!;
+ let d=newDocument(p);
+ d=transition(d,{type:'note',note:{line:1,clueIndex:0,start:0,end:5,kind:'excluded',reason:'直觉'}},puzzles);
+ let s=d.sessions[p.id];
+ let a=analyzeBoard(p,s.marks);
+ assert.equal(noteStatus(s.notes[0],a[1]),'invalid','excluding the only possible segment is refuted');
+ d=transition(d,{type:'note',note:{line:0,clueIndex:0,start:2,end:3,kind:'excluded',reason:'空间不够'}},puzzles);
+ s=d.sessions[p.id];
+ a=analyzeBoard(p,s.marks);
+ assert.equal(noteStatus(s.notes[1],a[0]),'active','open exclusion stays a hypothesis');
+ d=transition(d,{type:'mark',index:1,mark:'filled'},puzzles);
+ s=d.sessions[p.id];
+ a=analyzeBoard(p,s.marks);
+ assert.equal(noteStatus(s.notes[1],a[0]),'confirmed','marks proved the exclusion');
+});
+test('hint and undo bump the board version so stale conclusions cannot linger',()=>{
+ const p=puzzles[0];
+ let d=newDocument(p);
+ assert.equal(d.sessions[p.id].marksVersion,0);
+ d=transition(d,{type:'hint',...nextHint(p,d.sessions[p.id])!},puzzles);
+ assert.equal(d.sessions[p.id].marksVersion,1);
+ d=transition(d,{type:'undo'},puzzles);
+ assert.equal(d.sessions[p.id].marksVersion,2);
+ assert.equal(d.sessions[p.id].marks.every(m=>m==='unknown'),true);
+});
+test('invalid note drafts are rejected instead of stored',()=>{
+ const p=puzzles[0];
+ let d=newDocument(p);
+ d=transition(d,{type:'note',note:{line:1,clueIndex:0,start:0,end:1,kind:'candidate',reason:''}},puzzles);
+ assert.equal(d.sessions[p.id].notes.length,0,'segment length must match the number');
+ d=transition(d,{type:'note',note:{line:99,clueIndex:0,start:0,end:2,kind:'candidate',reason:''}},puzzles);
+ assert.equal(d.sessions[p.id].notes.length,0);
+});
+test('old saves without notes keep working and new notes round-trip',()=>{
+ stored=null;
+ const p=puzzles[0];
+ let d=newDocument(p);
+ d=transition(d,{type:'mark',index:0,mark:'filled'},puzzles);
+ d=transition(d,{type:'note',note:{line:1,clueIndex:0,start:1,end:3,kind:'candidate',reason:'候选'}},puzzles);
+ assert.ok(saveDocument(d));
+ const withNotes=loadDocument(puzzles);
+ assert.equal(withNotes.warning,'');
+ assert.equal(withNotes.document.sessions[p.id].notes.length,1);
+ assert.equal(withNotes.document.sessions[p.id].notes[0].reason,'候选');
+ const raw=JSON.parse(stored!);
+ delete raw.sessions[p.id].notes;
+ delete raw.sessions[p.id].marksVersion;
+ stored=JSON.stringify(raw);
+ const legacy=loadDocument(puzzles);
+ assert.equal(legacy.warning,'');
+ assert.deepEqual(legacy.document.sessions[p.id].notes,[]);
+ assert.equal(legacy.document.sessions[p.id].marksVersion,0);
+ assert.equal(legacy.document.sessions[p.id].marks[0],'filled');
+ const raw2=JSON.parse(stored!);
+ raw2.sessions[p.id].notes=[{id:'x',line:0,clueIndex:9,start:0,end:2,kind:'candidate',reason:'',version:0},null,'junk'];
+ stored=JSON.stringify(raw2);
+ const cleaned=loadDocument(puzzles);
+ assert.equal(cleaned.warning,'');
+ assert.equal(cleaned.document.sessions[p.id].notes.length,0);
+});

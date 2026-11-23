@@ -1,6 +1,6 @@
 import type { GameAction, GameDocument, Puzzle } from "../shared/types";
 import { isSolved, newSession } from "../shared/document";
-import { applyMark, undoMark } from "../features/board";
+import { applyMark, undoMark, addNote, removeNote } from "../features/board";
 import { HINT_LIMIT } from "../features/assist";
 import { registerSolve } from "../features/journal";
 export function transition(
@@ -33,6 +33,8 @@ export function transition(
   }
   if (action.type === "check" && !current.solved)
     next = { ...current, checks: current.checks + 1 };
+  if (action.type === "note") next = addNote(current, puzzle, action.note);
+  if (action.type === "dropNote") next = removeNote(current, action.id);
   if (action.type === "tick" && !current.solved)
     next = { ...current, seconds: current.seconds + 1 };
   if (action.type === "reset") next = newSession(puzzle);

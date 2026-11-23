@@ -8,18 +8,26 @@ import {
   X,
 } from "lucide-react";
 import { CatalogPanel, puzzles } from "../features/catalog";
-import { BoardPanel } from "../features/board";
+import { BoardPanel, useLineAnalyses } from "../features/board";
 import { AssistPanel } from "../features/assist";
 import { JournalPanel } from "../features/journal";
 import { GalleryPanel } from "../features/gallery";
+import type { ClueRef } from "../shared/types";
 import { useGame } from "./useGame";
 export function App() {
   const game = useGame();
   const [page, setPage] = useState<"play" | "gallery">("play");
   const [resetting, setResetting] = useState(false);
+  const [selection, setSelection] = useState<ClueRef | null>(null);
+  const { analyses, computing } = useLineAnalyses(
+    game.puzzle,
+    game.session.marks,
+    game.session.marksVersion,
+  );
   const open = (id: string) => {
     game.dispatch({ type: "open", id });
     game.clearMessage();
+    setSelection(null);
     setPage("play");
   };
   return (
@@ -82,6 +90,10 @@ export function App() {
                 <BoardPanel
                   puzzle={game.puzzle}
                   session={game.session}
+                  analyses={analyses}
+                  computing={computing}
+                  selection={selection}
+                  onSelectClue={setSelection}
                   onMark={(index, mark) =>
                     game.dispatch({ type: "mark", index, mark })
                   }
@@ -92,8 +104,13 @@ export function App() {
                   puzzle={game.puzzle}
                   session={game.session}
                   message={game.message}
+                  selection={selection}
+                  analyses={analyses}
+                  computing={computing}
                   onHint={game.hint}
                   onCheck={game.check}
+                  onPin={(note) => game.dispatch({ type: "note", note })}
+                  onDrop={(id) => game.dispatch({ type: "dropNote", id })}
                 />
               </div>
               <div className="bottom-row">
@@ -163,7 +180,7 @@ export function App() {
             </button>
             <h2 id="reset-title">重新探索这幅图？</h2>
             <p>
-              本题标记、计时和提示额度会重置。已完成的解题记录和收藏仍保留。
+              本题标记、推理笔记、计时和提示额度会重置。已完成的解题记录和收藏仍保留。
             </p>
             <div>
               <button onClick={() => setResetting(false)}>继续解题</button>
@@ -172,6 +189,7 @@ export function App() {
                 onClick={() => {
                   game.dispatch({ type: "reset" });
                   game.clearMessage();
+                  setSelection(null);
                   setResetting(false);
                 }}
               >

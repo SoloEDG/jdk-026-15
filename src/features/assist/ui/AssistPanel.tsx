@@ -1,20 +1,37 @@
 import { Lightbulb, ScanLine, ArrowUpRight, Sparkles } from "lucide-react";
-import type { Puzzle, Session } from "../../../shared/types";
+import type {
+  ClueRef,
+  NoteDraft,
+  Puzzle,
+  Session,
+} from "../../../shared/types";
+import type { LineAnalysis } from "../../board/lib/lineAnalysis";
 import { HINT_LIMIT } from "../model/hints";
 import { inspect } from "../lib/inspect";
 import { RuleGuide } from "./RuleGuide";
+import { ReasoningPanel } from "./ReasoningPanel";
 export function AssistPanel({
   puzzle,
   session,
   message,
+  selection,
+  analyses,
+  computing,
   onHint,
   onCheck,
+  onPin,
+  onDrop,
 }: {
   puzzle: Puzzle;
   session: Session;
   message: string;
+  selection: ClueRef | null;
+  analyses: LineAnalysis[] | null;
+  computing: boolean;
   onHint: () => void;
   onCheck: () => void;
+  onPin: (note: NoteDraft) => void;
+  onDrop: (id: string) => void;
 }) {
   const stats = inspect(puzzle, session);
   return (
@@ -63,6 +80,15 @@ export function AssistPanel({
         </div>
         <RuleGuide />
       </section>
+      <ReasoningPanel
+        puzzle={puzzle}
+        session={session}
+        selection={selection}
+        analyses={analyses}
+        computing={computing}
+        onPin={onPin}
+        onDrop={onDrop}
+      />
       <section className="quiet-card">
         <Sparkles size={21} />
         <span>小小的专注时刻</span>

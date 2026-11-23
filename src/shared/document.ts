@@ -4,6 +4,8 @@ export function newSession(puzzle: Puzzle): Session {
     puzzleId: puzzle.id,
     marks: Array(puzzle.size ** 2).fill("unknown"),
     moves: [],
+    notes: [],
+    marksVersion: 0,
     hints: 0,
     checks: 0,
     seconds: 0,

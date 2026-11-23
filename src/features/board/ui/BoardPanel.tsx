@@ -1,27 +1,77 @@
-import { useState } from "react";
-import { Clock3, CheckCircle2, MousePointer2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Clock3, CheckCircle2, MousePointer2, TriangleAlert } from "lucide-react";
 import { clueSet } from "../../../shared/clues";
-import type { Puzzle, Session, Tool } from "../../../shared/types";
+import type { ClueRef, Puzzle, Session, Tool } from "../../../shared/types";
 import { completion } from "../../../shared/document";
-import { lineStatuses } from "../lib/lineStatus";
+import type { LineAnalysis } from "../lib/lineAnalysis";
+import { noteStatus } from "../model/notes";
 import { BoardToolbar } from "./BoardToolbar";
 import { Clue } from "./Clue";
 export function BoardPanel({
   puzzle,
   session,
+  analyses,
+  computing,
+  selection,
+  onSelectClue,
   onMark,
   onUndo,
   onReset,
 }: {
   puzzle: Puzzle;
   session: Session;
+  analyses: LineAnalysis[] | null;
+  computing: boolean;
+  selection: ClueRef | null;
+  onSelectClue: (ref: ClueRef | null) => void;
   onMark: (i: number, t: Tool) => void;
   onUndo: () => void;
   onReset: () => void;
 }) {
   const [tool, setTool] = useState<Tool>("filled");
-  const clues = clueSet(puzzle.size, puzzle.solution);
-  const statuses = lineStatuses(puzzle, session.marks);
+  const size = puzzle.size;
+  const clues = clueSet(size, puzzle.solution);
+  const satisfied = analyses?.filter((a) => a.satisfied).length ?? 0;
+  const conflicts = analyses?.filter((a) => a.conflict).length ?? 0;
+  const highlights = useMemo(() => {
+    const map = new Map<number, string>();
+    if (!analyses) return map;
+    const add = (line: number, offset: number, cls: string) => {
+      const index = line < size ? line * size + offset : offset * size + line - size;
+      map.set(index, (map.get(index) ?? "") + cls);
+    };
+    if (selection) {
+      const analysis = analyses[selection.line];
+      const cls = selection.line < size ? " hl-row" : " hl-col";
+      if (analysis && !analysis.conflict) {
+        analysis.possible[selection.clueIndex]?.forEach((ok, offset) => {
+          if (ok) add(selection.line, offset, cls);
+        });
+        analysis.certain[selection.clueIndex]?.forEach((ok, offset) => {
+          if (ok) add(selection.line, offset, " hl-certain");
+        });
+      }
+    }
+    for (const note of session.notes) {
+      const analysis = analyses[note.line];
+      if (!analysis || noteStatus(note, analysis) !== "active") continue;
+      const cls =
+        note.kind === "candidate"
+          ? " note-cand"
+          : note.line < size
+            ? " note-excl-row"
+            : " note-excl-col";
+      for (let offset = note.start; offset < note.end; offset++)
+        add(note.line, offset, cls);
+    }
+    return map;
+  }, [analyses, selection, session.notes, size]);
+  const pick = (line: number) => (clueIndex: number) =>
+    onSelectClue(
+      selection && selection.line === line && selection.clueIndex === clueIndex
+        ? null
+        : { line, clueIndex },
+    );
   return (
     <section className="board-panel panel">
       <div className="board-heading">
@@ -68,13 +118,24 @@ export function BoardPanel({
             <Clue
               key={"c" + i}
               values={v}
-              done={statuses[puzzle.size + i]}
+              analysis={analyses ? analyses[puzzle.size + i] : null}
+              selected={
+                selection?.line === puzzle.size + i ? selection.clueIndex : null
+              }
+              onSelect={pick(puzzle.size + i)}
               vertical
             />
           ))}
           {Array.from({ length: puzzle.size }, (_, row) => (
             <div className="grid-row" key={row}>
-              <Clue values={clues[row]} done={statuses[row]} />
+              <Clue
+                values={clues[row]}
+                analysis={analyses ? analyses[row] : null}
+                selected={
+                  selection?.line === row ? selection.clueIndex : null
+                }
+                onSelect={pick(row)}
+              />
               {Array.from({ length: puzzle.size }, (_, col) => {
                 const i = row * puzzle.size + col;
                 const mark = session.marks[i];
@@ -82,7 +143,7 @@ export function BoardPanel({
                   <button
                     key={col}
                     aria-label={`第${row + 1}行第${col + 1}列 ${mark === "filled" ? "已填" : mark === "cross" ? "标空" : "未知"}`}
-                    className={`cell ${mark} ${(col + 1) % 5 === 0 ? "major-right" : ""} ${(row + 1) % 5 === 0 ? "major-bottom" : ""}`}
+                    className={`cell ${mark} ${(col + 1) % 5 === 0 ? "major-right" : ""} ${(row + 1) % 5 === 0 ? "major-bottom" : ""}${highlights.get(i) ?? ""}`}
                     disabled={session.solved}
                     onClick={() =>
                       onMark(i, session.marks[i] === tool ? "unknown" : tool)
@@ -102,11 +163,18 @@ export function BoardPanel({
       </div>
       <div className="board-footer">
         <span>
-          <MousePointer2 size={14} /> 左键填涂 · 右键标空
+          <MousePointer2 size={14} /> 左键填涂 · 右键标空 · 点选数字看候选
         </span>
         <span>
-          <span className="status-dot" /> {statuses.filter(Boolean).length} /{" "}
-          {puzzle.size * 2} 条线已满足
+          {conflicts > 0 && (
+            <em className="conflict-flag">
+              <TriangleAlert size={13} /> {conflicts} 条线没有合法排列
+            </em>
+          )}
+          <span className="status-dot" />
+          {computing
+            ? "候选计算中…"
+            : `${satisfied} / ${puzzle.size * 2} 条线已满足`}
         </span>
       </div>
       <div className="progress-caption">

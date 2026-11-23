@@ -18,6 +18,7 @@ export function applyMark(
     ...session,
     marks,
     moves: [...session.moves, { index, before, after: mark }].slice(-500),
+    marksVersion: session.marksVersion + 1,
     updatedAt: Date.now(),
   };
 }
@@ -30,6 +31,7 @@ export function undoMark(session: Session): Session {
     ...session,
     marks,
     moves: session.moves.slice(0, -1),
+    marksVersion: session.marksVersion + 1,
     updatedAt: Date.now(),
   };
 }
